@@ -18,11 +18,4 @@ enum GitHubAuthConfiguration {
 
     /// Scopes required for fetch/pull/push over HTTPS.
     static let defaultScopes = ["repo", "read:user"]
-
-    /// Matches the app bundle ID so Keychain items are isolated per build.
-    static var keychainService: String {
-        Bundle.main.bundleIdentifier ?? "GitOrigin"
-    }
-
-    static let keychainAccount = "github-access-token"
 }

@@ -33,11 +33,12 @@ actor GitExecutor {
             environment[key] = value
         }
 
-        // Run in-process (not Task.detached) so TCC grants from NSOpenPanel apply to git.
+        // Use `git -C` instead of `currentDirectoryURL` — sandboxed apps often cannot
+        // set the process working directory to a security-scoped repository path.
         let process = Process()
         process.executableURL = gitURL
-        process.arguments = arguments
-        process.currentDirectoryURL = directory
+        process.arguments = ["-C", directory.path] + arguments
+        process.currentDirectoryURL = FileManager.default.temporaryDirectory
         process.environment = environment
 
         let stdoutPipe = Pipe()

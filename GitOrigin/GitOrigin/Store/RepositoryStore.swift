@@ -73,6 +73,10 @@ final class RepositoryStore {
         repoAccess.recentRepositories()
     }
 
+    var recentRepositoryPathOrder: [String] {
+        repoAccess.recentRepositoryPathOrder()
+    }
+
     var localBranches: [GitBranch] {
         branches.filter { !$0.isRemote }
     }
@@ -111,7 +115,7 @@ final class RepositoryStore {
         defer { isLoadingCatalog = false }
 
         guard let token = try? GitHubKeychain.loadAccessToken() else {
-            catalogItems = localCatalogItems()
+            catalogItems = localOnlyCatalogItems()
             return
         }
 
@@ -120,7 +124,7 @@ final class RepositoryStore {
             var items: [RepositoryCatalogItem] = []
 
             for repo in remoteRepos {
-                let localURL = await localPath(forGitHubFullName: repo.fullName)
+                let localURL = repoAccess.linkedLocalURL(forGitHubFullName: repo.fullName)
                 items.append(
                     RepositoryCatalogItem(
                         id: "github-\(repo.fullName)",
@@ -134,14 +138,23 @@ final class RepositoryStore {
                 )
             }
 
-            for localItem in localCatalogItems() {
-                guard !items.contains(where: { $0.localURL == localItem.localURL }) else { continue }
-                items.append(localItem)
-            }
+            let linkedPaths = Set(
+                items.compactMap { item in
+                    item.localURL.map { RepoAccessManager.normalizedPath($0) }
+                }
+            )
+            let apiFullNames = Set(remoteRepos.map(\.fullName))
+            items.append(contentsOf: clonedCatalogItems(apiFullNames: apiFullNames, excludingPaths: linkedPaths))
 
-            catalogItems = items
+            let shownPaths = Set(
+                items.compactMap { item in
+                    item.localURL.map { RepoAccessManager.normalizedPath($0) }
+                }
+            )
+            items.append(contentsOf: localOnlyCatalogItems(excludingPaths: shownPaths))
+            catalogItems = sortCatalogByRecency(items)
         } catch {
-            catalogItems = localCatalogItems()
+            catalogItems = localOnlyCatalogItems()
             presentAlert(title: "GitHub Repositories", message: error.localizedDescription)
         }
     }
@@ -152,15 +165,69 @@ final class RepositoryStore {
             return
         }
 
-        if let htmlURL = item.htmlURL {
-            presentAlert(
-                title: "Repository Not on This Mac",
-                message: "Choose the local folder for “\(item.title)”, or clone it from GitHub in your browser first."
-            )
-            NSWorkspace.shared.open(htmlURL)
+        if item.source == .github || item.source == .cloned {
+            await locateLocalFolder(for: item)
+            return
         }
 
         await openRepositoryViaPanel()
+    }
+
+    func locateLocalFolder(for item: RepositoryCatalogItem) async {
+        guard let url = repoAccess.promptForRepository() else { return }
+
+        guard let accessed = repoAccess.beginAccess(to: url) else {
+            presentError(.accessDenied)
+            return
+        }
+
+        do {
+            guard try await git.isInsideWorkTree(in: accessed) else {
+                presentAlert(
+                    title: "Not a Git Repository",
+                    message: "The selected folder is not a Git repository."
+                )
+                repoAccess.endAccess()
+                return
+            }
+
+            if let expectedFullName = item.fullName {
+                guard let origin = try await git.originURL(in: accessed),
+                      matches(fullName: expectedFullName, originURL: origin) else {
+                    presentAlert(
+                        title: "Different Repository",
+                        message: "This folder’s Git remote does not match “\(expectedFullName)”. Choose the correct folder or clone the repository first."
+                    )
+                    repoAccess.endAccess()
+                    return
+                }
+                repoAccess.linkGitHubRepository(fullName: expectedFullName, localURL: accessed)
+            }
+
+            await openRepository(at: accessed)
+        } catch let error as GitError {
+            repoAccess.endAccess()
+            presentError(error)
+        } catch {
+            repoAccess.endAccess()
+            presentError(.commandFailed(message: error.localizedDescription))
+        }
+    }
+
+    func openCatalogItemOnGitHub(_ item: RepositoryCatalogItem) {
+        guard let htmlURL = item.htmlURL else { return }
+        NSWorkspace.shared.open(htmlURL)
+    }
+
+    func revealCatalogItemInFinder(_ item: RepositoryCatalogItem) {
+        guard let localURL = item.localURL else { return }
+        NSWorkspace.shared.activateFileViewerSelecting([localURL])
+    }
+
+    func unlinkLocalFolder(for item: RepositoryCatalogItem) async {
+        guard let fullName = item.fullName else { return }
+        repoAccess.unlinkGitHubRepository(fullName: fullName)
+        await refreshRepositoryCatalog()
     }
 
     func openRepositoryViaPanel() async {
@@ -183,11 +250,13 @@ final class RepositoryStore {
                     title: "Not a Git Repository",
                     message: "The selected folder is not a Git repository. Choose a folder that contains a `.git` directory."
                 )
+                repoAccess.endAccess()
                 return
             }
 
             guard repoAccess.canWriteToGitDirectory(at: workingURL) else {
                 presentError(.accessDenied)
+                repoAccess.endAccess()
                 return
             }
 
@@ -195,17 +264,26 @@ final class RepositoryStore {
             repoAccess.addRecentRepository(workingURL)
             if let origin = try await git.originURL(in: workingURL) {
                 originCache[workingURL.path] = origin
+                if let parsed = GitRemoteURLParser.parseGitHubRepository(from: origin) {
+                    let fullName = "\(parsed.owner)/\(parsed.name)"
+                    repoAccess.linkGitHubRepository(fullName: fullName, localURL: workingURL)
+                }
             }
 
             historyBranchName = nil
             startWatchingRepository(at: workingURL)
             await refreshStatus(userInitiated: true)
+            await refreshBranches()
+            await refreshHistory(for: currentBranch)
+            await syncWithRemoteAfterOpen()
             await refreshRepositoryMetadata()
             await refreshPullRequests()
             await refreshRepositoryCatalog()
         } catch let error as GitError {
+            repoAccess.endAccess()
             presentError(error)
         } catch {
+            repoAccess.endAccess()
             presentError(.commandFailed(message: error.localizedDescription))
         }
     }
@@ -657,35 +735,83 @@ final class RepositoryStore {
         }
     }
 
-    private func localCatalogItems() -> [RepositoryCatalogItem] {
-        recentRepositories.map { url in
-            RepositoryCatalogItem(
-                id: "local-\(url.path)",
+    private func clonedCatalogItems(
+        apiFullNames: Set<String>,
+        excludingPaths: Set<String>
+    ) -> [RepositoryCatalogItem] {
+        repoAccess.allGitHubLinks().compactMap { fullName, localURL in
+            guard !apiFullNames.contains(fullName) else { return nil }
+
+            let path = RepoAccessManager.normalizedPath(localURL)
+            guard !excludingPaths.contains(path) else { return nil }
+
+            let name = fullName.split(separator: "/").last.map(String.init) ?? fullName
+            return RepositoryCatalogItem(
+                id: "cloned-\(fullName)",
+                title: name,
+                subtitle: fullName,
+                fullName: fullName,
+                localURL: localURL,
+                htmlURL: URL(string: "https://github.com/\(fullName)"),
+                source: .cloned
+            )
+        }
+    }
+
+    private func localOnlyCatalogItems(excludingPaths: Set<String> = []) -> [RepositoryCatalogItem] {
+        repoAccess.recentRepositoryPathOrder().compactMap { path in
+            guard !excludingPaths.contains(path) else { return nil }
+            guard repoAccess.linkedFullName(forLocalPath: path) == nil else { return nil }
+
+            let url = URL(fileURLWithPath: path, isDirectory: true)
+            return RepositoryCatalogItem(
+                id: "local-\(path)",
                 title: url.lastPathComponent,
                 subtitle: url.deletingLastPathComponent().path,
                 fullName: nil,
                 localURL: url,
                 htmlURL: nil,
-                source: .local
+                source: .localOnly
             )
         }
     }
 
-    private func localPath(forGitHubFullName fullName: String) async -> URL? {
-        for url in recentRepositories {
-            if let cached = originCache[url.path],
-               matches(fullName: fullName, originURL: cached) {
-                return url
-            }
+    private func sortCatalogByRecency(_ items: [RepositoryCatalogItem]) -> [RepositoryCatalogItem] {
+        let recentOrder = repoAccess.recentRepositoryPathOrder()
 
-            if let origin = try? await git.originURL(in: url) {
-                originCache[url.path] = origin
-                if matches(fullName: fullName, originURL: origin) {
-                    return url
-                }
+        func recencyRank(for item: RepositoryCatalogItem) -> Int {
+            guard let path = item.localURL.map({ RepoAccessManager.normalizedPath($0) }) else {
+                return Int.max
             }
+            return recentOrder.firstIndex(of: path) ?? Int.max
         }
-        return nil
+
+        return items.sorted { lhs, rhs in
+            let left = recencyRank(for: lhs)
+            let right = recencyRank(for: rhs)
+            if left != right { return left < right }
+            return lhs.title.localizedStandardCompare(rhs.title) == .orderedAscending
+        }
+    }
+
+    private func syncWithRemoteAfterOpen() async {
+        guard let repoURL else { return }
+
+        isSyncing = true
+        defer { isSyncing = false }
+
+        do {
+            try await git.fetch(in: repoURL)
+            await refreshBranches()
+            await refreshHistory(for: historyBranchName ?? currentBranch)
+            await refreshStatus()
+        } catch let error as GitError {
+            if case .authenticationFailed = error {
+                presentError(error)
+            }
+        } catch {
+            // Network errors on open are non-fatal; local branches and history still work.
+        }
     }
 
     private func matches(fullName: String, originURL: String) -> Bool {

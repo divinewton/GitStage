@@ -19,6 +19,7 @@ struct WorkspaceColumnView: View {
                 }
             }
             .pickerStyle(.segmented)
+            .labelsHidden()
             .padding(.horizontal, 12)
             .padding(.vertical, 10)
 
@@ -34,7 +35,7 @@ struct WorkspaceColumnView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .navigationTitle(mode.rawValue)
+        .navigationTitle(workspaceTitle)
         .onChange(of: store.preferredWorkspaceMode) { _, newMode in
             if let newMode {
                 mode = newMode
@@ -53,5 +54,15 @@ struct WorkspaceColumnView: View {
                 break
             }
         }
+    }
+
+    private var workspaceTitle: String {
+        if let name = store.githubRepository?.name {
+            return name
+        }
+        if let repoURL = store.repoURL {
+            return repoURL.lastPathComponent
+        }
+        return "No Repository"
     }
 }

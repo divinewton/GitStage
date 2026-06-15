@@ -2,7 +2,7 @@
 //  GitHubAuthService.swift
 //  GitOrigin
 //
-//  Observable sign-in state for the app gate. Owns the OAuth device flow, Keychain token,
+//  Observable sign-in state for the app gate. Owns the OAuth device flow, persisted token,
 //  and pushes the access token into GitExecutor for HTTPS remotes.
 //
 
@@ -105,7 +105,7 @@ final class GitHubAuthService {
             } catch let error as GitHubOAuthClientError {
                 lastError = .networkFailure(error.localizedDescription ?? "GitHub sign-in failed.")
             } catch let error as KeychainError {
-                lastError = .keychainFailure(error.localizedDescription ?? "Could not save credentials.")
+                lastError = .keychainFailure(error.localizedDescription ?? "Could not save sign-in session.")
             } catch {
                 lastError = .networkFailure(error.localizedDescription)
             }

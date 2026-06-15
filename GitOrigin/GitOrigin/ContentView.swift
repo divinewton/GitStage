@@ -85,7 +85,7 @@ struct ContentView: View {
             }
         }
         .task {
-            await store.refreshRepositoryCatalog()
+            guard store.repoURL != nil else { return }
             await store.refreshBranches()
         }
     }

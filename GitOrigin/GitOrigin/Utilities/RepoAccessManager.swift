@@ -3,7 +3,7 @@
 //  GitOrigin
 //
 //  NSOpenPanel for choosing a repo folder, security-scoped bookmark persistence,
-//  and write-access probe. Required for App Sandbox + Mac App Store distribution.
+//  and explicit GitHub fullName → local folder links (no git probing at catalog time).
 //
 
 import AppKit
@@ -12,6 +12,7 @@ import Foundation
 @MainActor
 final class RepoAccessManager {
     private static let recentBookmarksKey = "recentRepositoryBookmarks"
+    private static let githubLinksKey = "githubRepositoryLinks"
     private static let maxRecentCount = 12
 
     /// The repository URL that currently holds an active security-scoped grant.
@@ -39,19 +40,19 @@ final class RepoAccessManager {
     func beginAccess(to url: URL) -> URL? {
         endAccess()
 
-        let standardized = url.standardizedFileURL
+        let targetPath = Self.normalizedPath(url)
 
-        if let bookmarkURL = resolveSavedBookmark(matching: standardized) {
+        if let bookmarkURL = resolveSavedBookmark(matchingPath: targetPath) {
             activeURL = bookmarkURL
             return bookmarkURL
         }
 
-        guard standardized.startAccessingSecurityScopedResource() else {
+        guard url.startAccessingSecurityScopedResource() else {
             return nil
         }
 
-        activeURL = standardized
-        return standardized
+        activeURL = url.standardizedFileURL
+        return activeURL
     }
 
     /// Releases the active security-scoped grant when closing a repository.
@@ -63,19 +64,13 @@ final class RepoAccessManager {
 
     /// Persists a security-scoped bookmark so the repo can be reopened after relaunch.
     func addRecentRepository(_ url: URL) {
-        guard let bookmark = try? url.bookmarkData(
-            options: .withSecurityScope,
-            includingResourceValuesForKeys: nil,
-            relativeTo: nil
-        ) else {
-            return
-        }
+        guard let bookmark = makeBookmark(for: url) else { return }
 
         var bookmarks = loadRecentBookmarks()
+        let targetPath = Self.normalizedPath(url)
         bookmarks.removeAll { existing in
             guard let resolved = resolveBookmarkData(existing) else { return false }
-            defer { resolved.stopAccessingSecurityScopedResource() }
-            return resolved.standardizedFileURL == url.standardizedFileURL
+            return Self.normalizedPath(resolved) == targetPath
         }
 
         bookmarks.insert(bookmark, at: 0)
@@ -86,22 +81,82 @@ final class RepoAccessManager {
         UserDefaults.standard.set(bookmarks, forKey: Self.recentBookmarksKey)
     }
 
-    /// Resolves saved bookmarks without starting long-lived access (for menus and catalog matching).
-    func recentRepositories() -> [URL] {
-        loadRecentBookmarks().compactMap { data in
-            guard let url = resolveBookmarkData(data) else { return nil }
-            defer { url.stopAccessingSecurityScopedResource() }
-            guard FileManager.default.fileExists(atPath: url.path) else { return nil }
-            return url.standardizedFileURL
+    /// Saves an explicit link between a GitHub `owner/name` and a local folder bookmark.
+    func linkGitHubRepository(fullName: String, localURL: URL) {
+        guard let bookmark = makeBookmark(for: localURL) else { return }
+        var links = loadGitHubLinks()
+        links[fullName] = bookmark
+        UserDefaults.standard.set(links, forKey: Self.githubLinksKey)
+        addRecentRepository(localURL)
+    }
+
+    func unlinkGitHubRepository(fullName: String) {
+        var links = loadGitHubLinks()
+        links.removeValue(forKey: fullName)
+        UserDefaults.standard.set(links, forKey: Self.githubLinksKey)
+    }
+
+    /// All saved GitHub fullName → local folder links.
+    func allGitHubLinks() -> [String: URL] {
+        var links: [String: URL] = [:]
+        for (fullName, data) in loadGitHubLinks() {
+            guard let url = resolveBookmarkData(data) else { continue }
+            links[fullName] = url.standardizedFileURL
         }
+        return links
+    }
+
+    /// GitHub full name linked to a local path, if any.
+    func linkedFullName(forLocalPath path: String) -> String? {
+        let targetPath = Self.normalizedPath(URL(fileURLWithPath: path, isDirectory: true))
+        for (fullName, data) in loadGitHubLinks() {
+            guard let url = resolveBookmarkData(data) else { continue }
+            if Self.normalizedPath(url) == targetPath {
+                return fullName
+            }
+        }
+        return nil
+    }
+
+    /// Resolved local folder for a linked GitHub repository (bookmark only — no file I/O).
+    func linkedLocalURL(forGitHubFullName fullName: String) -> URL? {
+        guard let data = loadGitHubLinks()[fullName],
+              let url = resolveBookmarkData(data) else {
+            return nil
+        }
+        return url.standardizedFileURL
+    }
+
+    /// Normalized paths for all folders linked to a GitHub repository.
+    func linkedLocalPaths() -> Set<String> {
+        Set(
+            loadGitHubLinks().values.compactMap { data in
+                resolveBookmarkData(data).map { Self.normalizedPath($0) }
+            }
+        )
+    }
+
+    /// Recent repository paths, most recently opened first (bookmark paths only).
+    func recentRepositoryPathOrder() -> [String] {
+        loadRecentBookmarks().compactMap { data in
+            resolveBookmarkData(data).map { Self.normalizedPath($0) }
+        }
+    }
+
+    /// Recent repository folders for menus (does not start security-scoped access).
+    func recentRepositories() -> [URL] {
+        recentRepositoryPathOrder().map { URL(fileURLWithPath: $0, isDirectory: true) }
     }
 
     /// Opens the most recently used repository bookmark, if still available.
     func restoreRecentRepository() -> URL? {
         for data in loadRecentBookmarks() {
             guard let url = resolveBookmarkData(data) else { continue }
-            guard FileManager.default.fileExists(atPath: url.path) else { continue }
             if let accessed = beginAccess(to: url) {
+                guard FileManager.default.fileExists(atPath: accessed.path) else {
+                    endAccess()
+                    continue
+                }
                 return accessed
             }
         }
@@ -128,24 +183,41 @@ final class RepoAccessManager {
 
     // MARK: - Bookmarks
 
+    static func normalizedPath(_ url: URL) -> String {
+        url.standardizedFileURL.resolvingSymlinksInPath().path
+    }
+
     private func loadRecentBookmarks() -> [Data] {
         UserDefaults.standard.array(forKey: Self.recentBookmarksKey) as? [Data] ?? []
     }
 
-    private func resolveSavedBookmark(matching url: URL) -> URL? {
-        let target = url.standardizedFileURL
+    private func loadGitHubLinks() -> [String: Data] {
+        UserDefaults.standard.dictionary(forKey: Self.githubLinksKey) as? [String: Data] ?? [:]
+    }
 
+    private func makeBookmark(for url: URL) -> Data? {
+        try? url.bookmarkData(
+            options: .withSecurityScope,
+            includingResourceValuesForKeys: nil,
+            relativeTo: nil
+        )
+    }
+
+    private func resolveSavedBookmark(matchingPath targetPath: String) -> URL? {
         for data in loadRecentBookmarks() {
-            guard let resolved = resolveBookmarkData(data) else { continue }
-            guard resolved.standardizedFileURL == target else {
-                resolved.stopAccessingSecurityScopedResource()
-                continue
+            if let resolved = resolveBookmarkData(data),
+               Self.normalizedPath(resolved) == targetPath,
+               startAccess(resolved) {
+                return resolved
             }
-            guard resolved.startAccessingSecurityScopedResource() else {
-                resolved.stopAccessingSecurityScopedResource()
-                return nil
+        }
+
+        for (_, data) in loadGitHubLinks() {
+            if let resolved = resolveBookmarkData(data),
+               Self.normalizedPath(resolved) == targetPath,
+               startAccess(resolved) {
+                return resolved
             }
-            return resolved
         }
 
         return nil
@@ -159,5 +231,9 @@ final class RepoAccessManager {
             relativeTo: nil,
             bookmarkDataIsStale: &isStale
         )
+    }
+
+    private func startAccess(_ url: URL) -> Bool {
+        url.startAccessingSecurityScopedResource()
     }
 }

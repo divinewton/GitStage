@@ -35,7 +35,7 @@ struct WorkspaceColumnView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
 
-            if store.repoURL != nil, mode == .changes {
+            if store.repoURL != nil, mode == .changes, !store.changedFiles.isEmpty {
                 Divider()
                 CommitBoxView(store: store)
             }

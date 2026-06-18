@@ -19,7 +19,7 @@ final class RepositoryStore {
     var changedFiles: [ChangedFile] = []
     var currentBranch: String?
     var selectedFile: ChangedFile?
-    var currentDiff: [DiffLine] = []
+    var currentDiff: [DiffHunk] = []
     var isLoadingStatus = false
     var isLoadingDiff = false
     var isCommitting = false
@@ -105,6 +105,10 @@ final class RepositoryStore {
         branches.filter(\.isRemote)
     }
 
+    var remoteOnlyBranches: [GitBranch] {
+        branches.remoteOnlyBranches()
+    }
+
     var historyDisplayBranch: String {
         historyBranchName ?? currentBranch ?? "branch"
     }
@@ -153,6 +157,21 @@ final class RepositoryStore {
 
     var hasAddedRepositories: Bool {
         !catalogItems.isEmpty
+    }
+
+    var currentRepositoryGitHubURL: URL? {
+        currentCatalogItem?.htmlURL
+            ?? githubRepository.flatMap {
+                URL(string: "https://github.com/\($0.owner)/\($0.name)")
+            }
+    }
+
+    private var currentCatalogItem: RepositoryCatalogItem? {
+        guard let repoURL else { return nil }
+        let path = RepoAccessManager.normalizedPath(repoURL)
+        return catalogItems.first {
+            RepoAccessManager.normalizedPath($0.localURL) == path
+        }
     }
 
     private var defaultCloneContainerPathDisplay: String {
@@ -391,13 +410,44 @@ final class RepositoryStore {
     }
 
     func openCatalogItemInEditor(_ item: RepositoryCatalogItem, editor: ExternalEditor) {
+        PreferredEditorSettings.saveLastUsedEditor(editor)
         ExternalEditorDiscovery.open(item.localURL, with: editor)
     }
 
     func openChangedFileInEditor(_ file: ChangedFile, editor: ExternalEditor) {
         guard let repoURL else { return }
+        PreferredEditorSettings.saveLastUsedEditor(editor)
         let fileURL = repoURL.appendingPathComponent(file.filepath)
         ExternalEditorDiscovery.openFile(fileURL, with: editor)
+    }
+
+    func openCurrentRepositoryInFinder() {
+        guard let repoURL else { return }
+        NSWorkspace.shared.activateFileViewerSelecting([repoURL])
+    }
+
+    func openCurrentRepositoryOnGitHub() {
+        guard let htmlURL = currentRepositoryGitHubURL else { return }
+        NSWorkspace.shared.open(htmlURL)
+    }
+
+    func openCurrentRepositoryInEditor(editor: ExternalEditor) {
+        guard let repoURL else { return }
+        PreferredEditorSettings.saveLastUsedEditor(editor)
+        ExternalEditorDiscovery.open(repoURL, with: editor)
+    }
+
+    func openCurrentRepositoryInPreferredEditor() {
+        guard repoURL != nil, let editor = PreferredEditorSettings.preferredEditor() else { return }
+        openCurrentRepositoryInEditor(editor: editor)
+    }
+
+    var preferredEditorDisplayName: String {
+        PreferredEditorSettings.preferredEditor()?.name ?? "Editor"
+    }
+
+    var canOpenCurrentRepositoryOnGitHub: Bool {
+        currentRepositoryGitHubURL != nil
     }
 
     func requestRemoveAddedRepository(_ item: RepositoryCatalogItem) {
@@ -1108,11 +1158,37 @@ extension RepositoryStore {
         ]
         store.selectedFile = store.changedFiles.first
         store.currentDiff = [
-            DiffLine(id: 0, text: "@@ -1,3 +1,4 @@", type: .header),
-            DiffLine(id: 1, text: " import SwiftUI", type: .context),
-            DiffLine(id: 2, text: "+import Observation", type: .addition),
-            DiffLine(id: 3, text: "-import Combine", type: .deletion),
+            DiffHunk(
+                id: 0,
+                header: "@@ -1,3 +1,4 @@",
+                lines: [
+                    DiffLine(id: 0, text: "import SwiftUI", type: .context, oldLineNumber: 1, newLineNumber: 1, noNewlineAtEnd: false),
+                    DiffLine(id: 1, text: "import Observation", type: .addition, oldLineNumber: nil, newLineNumber: 2, noNewlineAtEnd: false),
+                    DiffLine(id: 2, text: "import Combine", type: .deletion, oldLineNumber: 2, newLineNumber: nil, noNewlineAtEnd: false),
+                ]
+            ),
         ]
+        store.catalogItems = [
+            RepositoryCatalogItem(
+                id: "octocat/Hello-World",
+                owner: "octocat",
+                name: "Hello-World",
+                fullName: "octocat/Hello-World",
+                localURL: store.repoURL!,
+                htmlURL: URL(string: "https://github.com/octocat/Hello-World")
+            ),
+        ]
+        return store
+    }
+
+    static var previewClean: RepositoryStore {
+        let store = RepositoryStore(auth: .previewSignedIn)
+        store.repoURL = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("GitOriginPreviewClean", isDirectory: true)
+        store.currentBranch = "main"
+        store.historyBranchName = "main"
+        store.defaultBranchName = "main"
+        store.githubRepository = GitHubRepository(owner: "octocat", name: "Hello-World", defaultBranch: "main")
+        store.changedFiles = []
         store.catalogItems = [
             RepositoryCatalogItem(
                 id: "octocat/Hello-World",

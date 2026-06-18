@@ -23,29 +23,53 @@ final class GitDiffParserTests: XCTestCase {
     """
 
     func testParsesUnifiedDiffFixture() {
-        let lines = GitDiffParser.parse(sampleDiff)
+        let hunks = GitDiffParser.parse(sampleDiff)
 
-        XCTAssertFalse(lines.isEmpty)
-        XCTAssertTrue(lines.contains { $0.type == .header && $0.text.hasPrefix("@@") })
-        XCTAssertTrue(lines.contains { $0.type == .addition && $0.text.contains("Observation") })
-        XCTAssertTrue(lines.contains { $0.type == .context })
+        XCTAssertEqual(hunks.count, 1)
+        XCTAssertEqual(hunks[0].header, "@@ -1,3 +1,4 @@")
+        XCTAssertTrue(hunks[0].lines.contains { $0.type == .addition && $0.text == "import Observation" })
+        XCTAssertTrue(hunks[0].lines.contains { $0.type == .context && $0.text == "import SwiftUI" })
     }
 
-    func testAdditionDeletionAndHeaderLines() {
+    func testSkipsFileHeaders() {
+        let hunks = GitDiffParser.parse(sampleDiff)
+        let renderedText = hunks.flatMap(\.lines).map(\.text).joined(separator: "\n")
+
+        XCTAssertFalse(renderedText.contains("diff --git"))
+        XCTAssertFalse(renderedText.contains("index "))
+        XCTAssertFalse(renderedText.contains("--- a/"))
+        XCTAssertFalse(renderedText.contains("+++ b/"))
+    }
+
+    func testAssignsLineNumbers() {
         let output = """
-        --- a/file.swift
-        +++ b/file.swift
         @@ -1 +1,2 @@
          context
         -removed
         +added
         """
 
-        let lines = GitDiffParser.parse(output)
-        XCTAssertEqual(lines.filter { $0.type == .header }.count, 3)
-        XCTAssertEqual(lines.filter { $0.type == .addition }.count, 1)
-        XCTAssertEqual(lines.filter { $0.type == .deletion }.count, 1)
-        XCTAssertGreaterThanOrEqual(lines.filter { $0.type == .context }.count, 1)
+        let hunks = GitDiffParser.parse(output)
+        let lines = hunks[0].lines
+
+        XCTAssertEqual(lines[0].oldLineNumber, 1)
+        XCTAssertEqual(lines[0].newLineNumber, 1)
+        XCTAssertEqual(lines[1].oldLineNumber, 2)
+        XCTAssertNil(lines[1].newLineNumber)
+        XCTAssertNil(lines[2].oldLineNumber)
+        XCTAssertEqual(lines[2].newLineNumber, 2)
+    }
+
+    func testNoNewlineMarkerAppliesToPreviousLine() {
+        let output = """
+        @@ -1,1 +1,1 @@
+         hello
+        \\ No newline at end of file
+        """
+
+        let lines = GitDiffParser.parse(output)[0].lines
+        XCTAssertEqual(lines.count, 1)
+        XCTAssertTrue(lines[0].noNewlineAtEnd)
     }
 
     func testEmptyOutput() {
@@ -53,7 +77,11 @@ final class GitDiffParserTests: XCTestCase {
     }
 
     func testLineIDsAreSequential() {
-        let lines = GitDiffParser.parse("+one\n+two")
-        XCTAssertEqual(lines.map(\.id), [0, 1])
+        let hunks = GitDiffParser.parse("""
+        @@ -1 +1,2 @@
+         one
+        +two
+        """)
+        XCTAssertEqual(hunks[0].lines.map(\.id), [0, 1])
     }
 }

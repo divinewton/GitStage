@@ -43,18 +43,10 @@ struct ChangedFilesListView: View {
                         Task { await store.discardChanges(for: file) }
                     }
 
-                    Menu("Open In") {
-                        let editors = ExternalEditorDiscovery.installedEditors()
-                        if editors.isEmpty {
-                            Button("No Editors Found") {}
-                                .disabled(true)
-                        } else {
-                            ForEach(editors) { editor in
-                                Button(editor.name) {
-                                    store.openChangedFileInEditor(file, editor: editor)
-                                }
-                            }
-                        }
+                    EditorOpenMenu(open: { editor in
+                        store.openChangedFileInEditor(file, editor: editor)
+                    }) {
+                        Text("Open In")
                     }
                 }
             }

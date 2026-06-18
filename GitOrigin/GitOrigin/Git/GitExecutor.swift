@@ -311,12 +311,12 @@ actor GitExecutor {
     private func diffArguments(for file: ChangedFile) -> [String] {
         switch file.stagingState {
         case .staged:
-            ["diff", "--cached", "--no-color", "--", file.filepath]
+            ["diff", "--cached", "--no-color", "-U3", "--", file.filepath]
         case .unstaged, .partiallyStaged:
             if file.status == .untracked {
-                ["diff", "--no-color", "--no-index", "--", "/dev/null", file.filepath]
+                ["diff", "--no-color", "--no-index", "-U3", "--", "/dev/null", file.filepath]
             } else {
-                ["diff", "--no-color", "--", file.filepath]
+                ["diff", "--no-color", "-U3", "--", file.filepath]
             }
         }
     }

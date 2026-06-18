@@ -12,7 +12,9 @@ struct DiffDetailView: View {
 
     var body: some View {
         Group {
-            if store.selectedFile == nil {
+            if store.repoURL != nil, store.changedFiles.isEmpty {
+                RepositoryShortcutsView(store: store)
+            } else if store.selectedFile == nil {
                 ContentUnavailableView(
                     "Select a File",
                     systemImage: "doc.text.magnifyingglass",
@@ -22,12 +24,24 @@ struct DiffDetailView: View {
                 VStack(spacing: 0) {
                     fileHeader
                     Divider()
-                    DiffView(lines: store.currentDiff, isLoading: store.isLoadingDiff)
+                    DiffView(hunks: store.currentDiff, isLoading: store.isLoadingDiff)
                 }
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .navigationTitle(store.selectedFile?.filepath ?? "Diff")
+        .navigationTitle(detailTitle)
+    }
+
+    private var detailTitle: String {
+        if store.repoURL != nil, store.changedFiles.isEmpty {
+            if let name = store.githubRepository?.name {
+                return name
+            }
+            if let repoURL = store.repoURL {
+                return repoURL.lastPathComponent
+            }
+        }
+        return store.selectedFile?.filepath ?? "Diff"
     }
 
     @ViewBuilder

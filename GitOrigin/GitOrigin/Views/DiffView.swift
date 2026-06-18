@@ -2,13 +2,13 @@
 //  DiffView.swift
 //  GitOrigin
 //
-//  Renders parsed unified diff lines with addition/deletion/context styling.
+//  Renders parsed diff hunks with line numbers and hunk headers.
 //
 
 import SwiftUI
 
 struct DiffView: View {
-    let lines: [DiffLine]
+    let hunks: [DiffHunk]
     let isLoading: Bool
 
     var body: some View {
@@ -16,7 +16,7 @@ struct DiffView: View {
             if isLoading {
                 ProgressView("Loading diff…")
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else if lines.isEmpty {
+            } else if hunks.isEmpty {
                 ContentUnavailableView(
                     "No Diff",
                     systemImage: "doc.text",
@@ -24,12 +24,12 @@ struct DiffView: View {
                 )
             } else {
                 ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 0) {
-                        ForEach(lines) { line in
-                            DiffLineRow(line: line)
+                    LazyVStack(alignment: .leading, spacing: 16) {
+                        ForEach(hunks) { hunk in
+                            DiffHunkView(hunk: hunk)
                         }
                     }
-                    .padding(.vertical, 8)
+                    .padding(.vertical, 12)
                 }
             }
         }
@@ -38,22 +38,72 @@ struct DiffView: View {
     }
 }
 
+private struct DiffHunkView: View {
+    let hunk: DiffHunk
+
+    private var lineNumberWidth: CGFloat {
+        let maxLine = hunk.lines.reduce(0) { partial, line in
+            max(partial, line.oldLineNumber ?? 0, line.newLineNumber ?? 0)
+        }
+        let digits = max(2, String(maxLine).count)
+        return CGFloat(digits * 9 + 10)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text(hunk.header)
+                .font(.system(.caption, design: .monospaced))
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Color(nsColor: .separatorColor).opacity(0.22))
+
+            ForEach(hunk.lines) { line in
+                DiffLineRow(line: line, lineNumberWidth: lineNumberWidth)
+            }
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .strokeBorder(Color(nsColor: .separatorColor).opacity(0.35), lineWidth: 1)
+        }
+        .padding(.horizontal, 12)
+    }
+}
+
 private struct DiffLineRow: View {
     let line: DiffLine
+    let lineNumberWidth: CGFloat
 
     var body: some View {
         HStack(spacing: 0) {
-            Text(gutterSymbol)
-                .frame(width: 20, alignment: .center)
-                .foregroundStyle(gutterColor)
-                .accessibilityHidden(line.type == .header)
+            lineNumberText(line.oldLineNumber)
+            lineNumberText(line.newLineNumber)
 
-            Text(displayText)
-                .frame(maxWidth: .infinity, alignment: .leading)
+            Text(gutterSymbol)
+                .frame(width: 18, alignment: .center)
+                .foregroundStyle(gutterColor)
+
+            HStack(spacing: 4) {
+                Text(line.text.isEmpty ? " " : line.text)
+
+                if line.noNewlineAtEnd {
+                    NoNewlineMarker()
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .padding(.horizontal, 8)
         .padding(.vertical, 1)
         .background(backgroundColor)
+    }
+
+    private func lineNumberText(_ number: Int?) -> some View {
+        Text(number.map(String.init) ?? "")
+            .font(.system(.caption, design: .monospaced))
+            .foregroundStyle(.tertiary)
+            .frame(width: lineNumberWidth, alignment: .trailing)
+            .padding(.trailing, 6)
     }
 
     private var gutterSymbol: String {
@@ -61,31 +111,15 @@ private struct DiffLineRow: View {
         case .addition: "+"
         case .deletion: "-"
         case .context: " "
-        case .header: ""
-        }
-    }
-
-    private var displayText: String {
-        switch line.type {
-        case .header:
-            return line.text
-        case .addition, .deletion, .context:
-            if line.text.isEmpty { return "" }
-            if line.text.hasPrefix("+") || line.text.hasPrefix("-") || line.text.hasPrefix(" ") {
-                return String(line.text.dropFirst())
-            }
-            return line.text
         }
     }
 
     private var backgroundColor: Color {
         switch line.type {
         case .addition:
-            Color(nsColor: .systemGreen).opacity(0.18)
+            Color(nsColor: .systemGreen).opacity(0.16)
         case .deletion:
-            Color(nsColor: .systemRed).opacity(0.18)
-        case .header:
-            Color(nsColor: .separatorColor).opacity(0.25)
+            Color(nsColor: .systemRed).opacity(0.16)
         case .context:
             Color.clear
         }
@@ -95,14 +129,30 @@ private struct DiffLineRow: View {
         switch line.type {
         case .addition: Color(nsColor: .systemGreen)
         case .deletion: Color(nsColor: .systemRed)
-        case .context, .header: Color.secondary
+        case .context: Color.secondary.opacity(0.6)
         }
+    }
+}
+
+private struct NoNewlineMarker: View {
+    private let markerColor = Color(nsColor: .systemRed)
+
+    var body: some View {
+        HStack(spacing: 1) {
+            Image(systemName: "nosign")
+                .font(.caption2.weight(.semibold))
+
+            Image(systemName: "arrow.turn.down.left")
+                .font(.caption2.weight(.bold))
+        }
+        .foregroundStyle(markerColor)
+        .help("No newline at end of file")
     }
 }
 
 #Preview {
     DiffView(
-        lines: RepositoryStore.previewWithChanges.currentDiff,
+        hunks: RepositoryStore.previewWithChanges.currentDiff,
         isLoading: false
     )
     .frame(width: 640, height: 320)

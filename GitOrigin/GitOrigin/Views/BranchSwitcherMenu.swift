@@ -12,7 +12,7 @@ struct BranchSwitcherMenu: View {
 
     var body: some View {
         Menu {
-            if store.localBranches.isEmpty && store.remoteBranches.isEmpty {
+            if store.localBranches.isEmpty && store.remoteOnlyBranches.isEmpty {
                 Button("No Branches") {}
                     .disabled(true)
             }
@@ -21,18 +21,24 @@ struct BranchSwitcherMenu: View {
                 Button {
                     store.checkoutBranch(named: branch.name)
                 } label: {
-                    Text(branch.isCurrent ? "\(branch.name) ✓" : branch.name)
+                    if branch.isCurrent {
+                        Label(branch.name, systemImage: "checkmark")
+                    } else {
+                        Text(branch.name)
+                    }
                 }
                 .disabled(branch.isCurrent)
             }
 
-            if !store.localBranches.isEmpty && !store.remoteBranches.isEmpty {
+            if !store.localBranches.isEmpty && !store.remoteOnlyBranches.isEmpty {
                 Divider()
             }
 
-            ForEach(store.remoteBranches) { branch in
-                Button(branch.name) {
+            ForEach(store.remoteOnlyBranches) { branch in
+                Button {
                     store.requestCheckout(branch: branch)
+                } label: {
+                    Label(branch.checkoutDisplayName, systemImage: "icloud.and.arrow.down")
                 }
             }
 

@@ -197,18 +197,10 @@ struct RepositorySidebarView: View {
                 store.openCatalogItemOnGitHub(item)
             }
         }
-        Menu("Open In") {
-            let editors = ExternalEditorDiscovery.installedEditors()
-            if editors.isEmpty {
-                Button("No Editors Found") {}
-                    .disabled(true)
-            } else {
-                ForEach(editors) { editor in
-                    Button(editor.name) {
-                        store.openCatalogItemInEditor(item, editor: editor)
-                    }
-                }
-            }
+        EditorOpenMenu(open: { editor in
+            store.openCatalogItemInEditor(item, editor: editor)
+        }) {
+            Text("Open In")
         }
         Divider()
         Button("Remove from GitOrigin", role: .destructive) {

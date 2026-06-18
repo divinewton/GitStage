@@ -61,10 +61,25 @@ struct GitOriginApp: App {
                 }
                 .disabled(!auth.isSignedIn || store.repoURL == nil)
 
+                Divider()
+
                 Button("Reveal in Finder") {
-                    revealCurrentRepositoryInFinder()
+                    store.openCurrentRepositoryInFinder()
                 }
+                .keyboardShortcut(RepositoryCommandShortcuts.revealInFinder)
                 .disabled(!auth.isSignedIn || store.repoURL == nil)
+
+                Button("Open in \(store.preferredEditorDisplayName)") {
+                    store.openCurrentRepositoryInPreferredEditor()
+                }
+                .keyboardShortcut(RepositoryCommandShortcuts.openInEditor)
+                .disabled(!auth.isSignedIn || store.repoURL == nil)
+
+                Button("Open on GitHub") {
+                    store.openCurrentRepositoryOnGitHub()
+                }
+                .keyboardShortcut(RepositoryCommandShortcuts.openOnGitHub)
+                .disabled(!auth.isSignedIn || store.repoURL == nil || !store.canOpenCurrentRepositoryOnGitHub)
 
                 Divider()
 
@@ -132,23 +147,29 @@ struct GitOriginApp: App {
                 .disabled(!auth.isSignedIn || store.repoURL == nil)
 
                 Menu("Switch Branch") {
-                    if store.localBranches.isEmpty && store.remoteBranches.isEmpty {
+                    if store.localBranches.isEmpty && store.remoteOnlyBranches.isEmpty {
                         Button("No Branches") {}
                             .disabled(true)
                     } else {
                         ForEach(store.localBranches) { branch in
-                            Button(branchMenuTitle(for: branch)) {
+                            Button {
                                 store.checkoutBranch(named: branch.name)
+                            } label: {
+                                if branch.isCurrent {
+                                    Label(branch.name, systemImage: "checkmark")
+                                } else {
+                                    Text(branch.name)
+                                }
                             }
                             .disabled(branch.isCurrent)
                         }
 
-                        if !store.localBranches.isEmpty && !store.remoteBranches.isEmpty {
+                        if !store.localBranches.isEmpty && !store.remoteOnlyBranches.isEmpty {
                             Divider()
                         }
 
-                        ForEach(store.remoteBranches) { branch in
-                            Button(branch.name) {
+                        ForEach(store.remoteOnlyBranches) { branch in
+                            Button(branch.checkoutDisplayName) {
                                 store.requestCheckout(branch: branch)
                             }
                         }
@@ -162,10 +183,10 @@ struct GitOriginApp: App {
                             store.viewHistory(for: branch.name)
                         }
                     }
-                    if !store.remoteBranches.isEmpty {
+                    if !store.remoteOnlyBranches.isEmpty {
                         Divider()
-                        ForEach(store.remoteBranches) { branch in
-                            Button(branch.name) {
+                        ForEach(store.remoteOnlyBranches) { branch in
+                            Button(branch.checkoutDisplayName) {
                                 store.viewHistory(for: branch.name)
                             }
                         }
@@ -222,14 +243,5 @@ struct GitOriginApp: App {
             && !store.commitSummary.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             && store.repoURL != nil
             && !store.isCommitting
-    }
-
-    private func branchMenuTitle(for branch: GitBranch) -> String {
-        branch.isCurrent ? "\(branch.name) ✓" : branch.name
-    }
-
-    private func revealCurrentRepositoryInFinder() {
-        guard let repoURL = store.repoURL else { return }
-        NSWorkspace.shared.activateFileViewerSelecting([repoURL])
     }
 }

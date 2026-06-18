@@ -25,6 +25,23 @@ struct GitBranch: Identifiable, Hashable, Sendable {
     var localCheckoutName: String? {
         guard isRemote else { return name }
         guard let slash = name.firstIndex(of: "/") else { return nil }
-        return String(name[name.index(after: slash)...])
+        let localName = String(name[name.index(after: slash)...])
+        guard !localName.isEmpty, localName != "HEAD" else { return nil }
+        return localName
+    }
+
+    var checkoutDisplayName: String {
+        localCheckoutName ?? name
+    }
+}
+
+extension Array where Element == GitBranch {
+    /// Remote branches that do not already exist as a local branch with the same name.
+    func remoteOnlyBranches() -> [GitBranch] {
+        let localNames = Set(filter { !$0.isRemote }.map(\.name))
+        return filter { branch in
+            guard branch.isRemote, let localName = branch.localCheckoutName else { return false }
+            return !localNames.contains(localName)
+        }
     }
 }

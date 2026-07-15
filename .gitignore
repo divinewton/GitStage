@@ -62,4 +62,4 @@ fastlane/screenshots/**/*.png
 fastlane/test_output
 
 # Local OAuth client ID — create GitHubAuthSecrets.swift manually (see README.md)
-GitOrigin/GitOrigin/Auth/GitHubAuthSecrets.swift
+GitStage/GitStage/Auth/GitHubAuthSecrets.swift

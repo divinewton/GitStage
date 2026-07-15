@@ -1,4 +1,4 @@
-# GitOrigin
+# GitStage
 
 A native SwiftUI Git client for macOS 26+. Sign in with GitHub, open local repositories, review diffs, stage, commit, switch branches, and push.
 
@@ -11,17 +11,17 @@ A native SwiftUI Git client for macOS 26+. Sign in with GitHub, open local repos
 
 ## Build and run
 
-1. Open `GitOrigin/GitOrigin.xcodeproj` in Xcode.
+1. Open `GitStage/GitStage.xcodeproj` in Xcode.
 2. Complete the one-time OAuth setup below.
-3. Run the **GitOrigin** scheme.
+3. Run the **GitStage** scheme.
 
 The app uses the **App Sandbox** (required for Mac App Store distribution). Repository folders must be chosen through the open panel so macOS grants access.
 
 ## One-time OAuth setup
 
-GitOrigin uses the GitHub **OAuth device flow**. You need a local secrets file that is **not** committed to git.
+GitStage uses the GitHub **OAuth device flow**. You need a local secrets file that is **not** committed to git.
 
-Create `GitOrigin/GitOrigin/Auth/GitHubAuthSecrets.swift` with:
+Create `GitStage/GitStage/Auth/GitHubAuthSecrets.swift` with:
 
 ```swift
 import Foundation
@@ -39,7 +39,7 @@ Register an OAuth App at https://github.com/settings/developers (no client secre
 
 1. Fork and clone the repository.
 2. Create `GitHubAuthSecrets.swift` as shown above with **your** OAuth App client ID.
-3. In Xcode, set **Signing & Capabilities** to your Apple Developer team and update the bundle identifier if needed (`com.divinewton.GitOrigin` is the default).
+3. In Xcode, set **Signing & Capabilities** to your Apple Developer team and update the bundle identifier if needed (`com.divinewton.GitStage` is the default).
 4. Build and run.
 
 The client ID is public in desktop apps — never embed a client **secret**.
